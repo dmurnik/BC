@@ -1,0 +1,821 @@
+#include "Arduino.h"
+#include "../Headers/Headers.h"
+
+#define PIN_RIGHT 9 // [PB1] | Physical pinout of the microcircuit: 13
+#define PIN_UP    6 // [PB0] | Physical pinout of the microcircuit: 12
+#define PIN_OK    7 // [PD7] | Physical pinout of the microcircuit: 11
+#define PIN_LEFT  5 // [PD6] | Physical pinout of the microcircuit: 10
+#define PIN_DOWN  8 // [PD5] | Physical pinout of the microcircuit: 9
+
+#define BUTTON_RIGHT 0
+#define BUTTON_UP    1
+#define BUTTON_OK    2
+#define BUTTON_LEFT  3
+#define BUTTON_DOWN  4
+
+bool buttonStatus[5] = {
+    false, // [0] PIN_RIGHT
+    false, // [1] PIN_UP
+    false, // [2] PIN_OK
+    false, // [3] PIN_LEFT
+    false  // [4] PIN_DOWN
+};
+
+struct UIDisplayMenuItems {
+    int settingsIndexSelection = 0;
+    int settingsIndexLimit = 0;
+    int settingsIndexTotalizersSelected = 0;
+    int scrollOffset = 0;
+};
+UIDisplayMenuItems UIDisplayMenuItemsObject;
+
+UIDisplaySectionList UIDisplaySectionListObject = sectionDefault;
+bool UIDisplayNeedClear = true;
+bool UIDisplayNeedRefresh = true;
+
+static unsigned long UIDisplayTimeUpdate = 110;
+static unsigned long UIDisplayTimeUpdateTimeLast = 0;
+
+static unsigned int UIDisplayButtonTimeoutPressing = 120;
+
+void UIButtonsInitialize() {
+    pinMode(PIN_RIGHT, INPUT_PULLUP);
+    pinMode(PIN_UP, INPUT_PULLUP);
+    pinMode(PIN_OK, INPUT_PULLUP);
+    pinMode(PIN_LEFT, INPUT_PULLUP);
+    pinMode(PIN_DOWN, INPUT_PULLUP);
+};
+
+void UIDisplayInitialize() {
+    UIDisplayHandler();
+    UIButtonsInitialize();
+};
+
+void UIDisplayClear() {
+    MCPDisplayCommandSend(0x01);
+}
+// Thank`s You for help me - claude.ai... But i hate ai :^
+void UIDisplayMenuScrollable(const char** items, int count, const char* title = nullptr) {
+    int visibleRows = (title != nullptr) ? 3 : 4;
+    int startRow    = (title != nullptr) ? 1 : 0;
+
+    if (UIDisplayMenuItemsObject.settingsIndexSelection < UIDisplayMenuItemsObject.scrollOffset)
+        UIDisplayMenuItemsObject.scrollOffset = UIDisplayMenuItemsObject.settingsIndexSelection;
+    if (UIDisplayMenuItemsObject.settingsIndexSelection >= UIDisplayMenuItemsObject.scrollOffset + visibleRows)
+        UIDisplayMenuItemsObject.scrollOffset = UIDisplayMenuItemsObject.settingsIndexSelection - visibleRows + 1;
+
+    if (UIDisplayNeedClear) {
+        UIDisplayClear();
+        if (title != nullptr) {
+            MCPDisplayCursorSet(0, 0);
+            MCPDisplayPrintUTF(title);
+        }
+        UIDisplayNeedClear = false;
+    }
+
+    for (int i = 0; i < visibleRows; i++) {
+        int realIndex = UIDisplayMenuItemsObject.scrollOffset + i;
+        int screenRow = startRow + i;
+
+        MCPDisplayCursorSet(0, screenRow);
+        if (realIndex < count) {
+            bool selected = (realIndex == UIDisplayMenuItemsObject.settingsIndexSelection);
+            MCPDisplayPrintUTF(selected ? dictionaryWords[0] : " ");
+            MCPDisplayCursorSet(2, screenRow);
+            MCPDisplayPrintUTF(items[realIndex]);
+        } else {
+            MCPDisplayPrintUTF("                    ");
+        }
+    }
+    if (UIDisplayMenuItemsObject.scrollOffset > 0) {
+        MCPDisplayCursorSet(19, startRow);
+        MCPDisplayPrintUTF("^");
+    }
+    if (UIDisplayMenuItemsObject.scrollOffset + visibleRows < count) {
+        MCPDisplayCursorSet(19, startRow + visibleRows - 1);
+        MCPDisplayPrintUTF("v");
+    }
+}
+
+void UIDisplayToVoidAndBack() {
+    if (UIDisplayNeedClear == true) {
+        UIDisplayClear();
+
+        MCPDisplayCursorSet(0, 0);
+        MCPDisplayPrintUTF("*  .   .`.    * .  ,");
+
+        MCPDisplayCursorSet(0, 1);
+        MCPDisplayPrintUTF("   .  I`M   .`*   ..");
+
+        MCPDisplayCursorSet(0, 2);
+        MCPDisplayPrintUTF(" `.    VOID ,. ` .`.");
+
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrintUTF(". *   .  .  `*   . *");
+
+        UIDisplayNeedClear = false;
+    }
+}
+
+void UIDisplayDefault() {
+    if (UIDisplayNeedClear) {
+        UIDisplayClear();
+
+        MCPDisplayCursorSet(0, 0);
+        MCPDisplayPrintUTF("M: ");
+
+        MCPDisplayCursorSet(0, 1);
+        MCPDisplayPrintUTF("O:");
+
+        MCPDisplayCursorSet(0, 2);
+        MCPDisplayPrintUTF("B:");
+
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrintUTF("H:");
+                // Метка чётности (рисуется один раз при очистке экрана)
+        MCPDisplayCursorSet(16, 0);
+        MCPDisplayPrintUTF("P:");
+
+        UIDisplayTimeUpdateTimeLast = millis();
+
+        UIDisplayNeedClear = false;
+    }
+
+    UIDisplayMenuItemsObject.settingsIndexLimit = 0;
+    unsigned long currentTime = millis();
+
+    if (currentTime - UIDisplayTimeUpdateTimeLast >= UIDisplayTimeUpdate) {
+        UIDisplayTimeUpdateTimeLast = currentTime;
+
+        MCPDisplayCursorSet(4, 0);
+        MCPDisplayPrint(deviceConfigurationModbusBaudrateGet());
+
+        MCPDisplayCursorSet(11, 0);
+        MCPDisplayPrint(deviceConfigurationModbusSlaveAddressGet());
+                // Буква чётности (обновляется вместе с остальными значениями)
+        MCPDisplayCursorSet(18, 0);
+        switch (deviceDataObject.modbusParity) {
+            case 0: MCPDisplayPrint("N"); break;
+            case 1: MCPDisplayPrint("E"); break;
+            case 2: MCPDisplayPrint("O"); break;
+            default: MCPDisplayPrint("?"); break;
+        }
+
+        MCPDisplayCursorSet(4, 1);
+        MCPDisplayPrint(totalizerCommonReturn());
+
+        MCPDisplayCursorSet(4, 2);
+        MCPDisplayPrint(totalizerDirectReturn());
+
+        MCPDisplayCursorSet(4, 3);
+        MCPDisplayPrint(totalizerReverseReturn());
+    }
+};
+
+void UIDisplayMenuMain() {
+    const char* items[] = {
+        dictionaryWords[5],
+        dictionaryWords[6],
+        dictionaryWords[7],
+        dictionaryWords[20],
+        dictionaryWords[8],
+    };
+    int count = 5;
+
+    UIDisplayMenuItemsObject.settingsIndexLimit = count - 1;
+    UIDisplayMenuScrollable(items, count);
+};
+
+void UIDisplayMenuConnection() {
+    if (UIDisplayNeedClear == true) {
+        UIDisplayClear();
+
+        // Строка 0: Baudrate
+        MCPDisplayCursorSet(2, 0);
+        MCPDisplayPrintUTF(dictionaryWords[1]);              // "Baudrate"
+        MCPDisplayCursorSet(11, 0);
+        MCPDisplayPrint(deviceConfigurationModbusBaudrateGet());
+
+        // Строка 1: Address
+        MCPDisplayCursorSet(2, 1);
+        MCPDisplayPrintUTF(dictionaryWords[2]);              // "Address"
+        MCPDisplayCursorSet(11, 1);
+        MCPDisplayPrint(deviceConfigurationModbusSlaveAddressGet());
+
+        // Строка 2: Parity
+        MCPDisplayCursorSet(2, 2);
+        MCPDisplayPrintUTF(dictionaryWords[23]);             // "Parity"
+        MCPDisplayCursorSet(11, 2);
+        MCPDisplayPrintUTF(deviceConfigurationModbusParityGet());
+
+        // Строка 3: Back
+        MCPDisplayCursorSet(2, 3);
+        MCPDisplayPrintUTF(dictionaryWords[8]);              // "HA3AД"
+
+        UIDisplayNeedClear = false;
+    }
+
+    UIDisplayMenuItemsObject.settingsIndexLimit = 3;         // 4 пункта: 0,1,2,3
+
+    // Рисуем только ">" у выбранного пункта
+    for (int i = 0; i < 4; i++) {
+        MCPDisplayCursorSet(0, i);
+        if (i == UIDisplayMenuItemsObject.settingsIndexSelection) {
+            MCPDisplayPrintUTF(dictionaryWords[0]);          // "> "
+        } else {
+            MCPDisplayPrintUTF("  ");
+        }
+    }
+}
+
+void UIDisplayMenuTotalizers() {
+    if (UIDisplayNeedClear == true) {
+        UIDisplayClear();
+
+        MCPDisplayCursorSet(1, 0);
+        MCPDisplayPrintUTF(dictionaryWords[9]);
+        MCPDisplayCursorSet(7, 0);
+        MCPDisplayPrintUTF(dictionaryWords[6]);
+
+        MCPDisplayCursorSet(0, 1);
+        MCPDisplayPrintUTF(dictionaryWords[15]);
+
+        MCPDisplayCursorSet(0, 2);
+        MCPDisplayPrintUTF(dictionaryWords[16]);
+
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrintUTF(dictionaryWords[8]);
+
+        UIDisplayNeedClear = false;
+    }
+
+    UIDisplayMenuItemsObject.settingsIndexLimit = 2;
+
+
+    switch (UIDisplayMenuItemsObject.settingsIndexSelection) {
+    case 0:
+        MCPDisplayCursorSet(0, 1);
+        MCPDisplayPrintUTF(dictionaryWords[0]);
+        MCPDisplayCursorSet(2, 1);
+        MCPDisplayPrintUTF(dictionaryWords[15]);
+        break;
+    case 1:
+        MCPDisplayCursorSet(0, 2);
+        MCPDisplayPrintUTF(dictionaryWords[0]);
+        MCPDisplayCursorSet(2, 2);
+        MCPDisplayPrintUTF(dictionaryWords[16]);
+        break;
+    case 2:
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrintUTF(dictionaryWords[0]);
+        MCPDisplayCursorSet(2, 3);
+        MCPDisplayPrintUTF(dictionaryWords[8]);
+        break;
+    }
+}
+
+void UIDisplayMenuInformation() {
+    if (UIDisplayNeedClear == true) {
+        UIDisplayClear();
+
+        MCPDisplayCursorSet(1, 0);
+        MCPDisplayPrintUTF(dictionaryWords[9]);
+        MCPDisplayCursorSet(7, 0);
+        MCPDisplayPrintUTF(dictionaryWords[7]);
+
+        MCPDisplayCursorSet(3, 1);
+        MCPDisplayPrintUTF(serialNumber);
+
+        MCPDisplayCursorSet(3, 2);
+        MCPDisplayPrintUTF(firmwareVersion);
+
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrint(dictionaryWords[8]);
+
+        UIDisplayNeedClear = false;
+    }
+
+    UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+    UIDisplayMenuItemsObject.scrollOffset = 0;
+
+    switch (UIDisplayMenuItemsObject.settingsIndexSelection) {
+    case 0:
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrintUTF(dictionaryWords[0]);
+        MCPDisplayCursorSet(2, 3);
+        MCPDisplayPrintUTF(dictionaryWords[8]);
+        break;
+    }
+}
+
+void UIDisplayMenuCountMode() {
+    if (UIDisplayNeedClear == true) {
+        UIDisplayClear();
+
+        MCPDisplayCursorSet(1, 0);
+        MCPDisplayPrintUTF(dictionaryWords[9]);
+        MCPDisplayCursorSet(7, 0);
+        MCPDisplayPrintUTF(dictionaryWords[20]);
+
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrintUTF("  ");
+        MCPDisplayCursorSet(2, 3);
+        MCPDisplayPrintUTF(dictionaryWords[8]);
+
+        UIDisplayNeedClear = false;
+    }
+
+    if (counterMode == COUNTER_MODE_AUTO) {
+        UIDisplayMenuItemsObject.settingsIndexLimit = 1;
+    } else {
+        UIDisplayMenuItemsObject.settingsIndexLimit = 2;
+    }
+
+    {
+        bool sel = (UIDisplayMenuItemsObject.settingsIndexSelection == 0);
+        MCPDisplayCursorSet(0, 1);
+        MCPDisplayPrintUTF(sel ? dictionaryWords[0] : "  ");
+        MCPDisplayCursorSet(2, 1);
+        if (counterMode == COUNTER_MODE_AUTO) {
+            MCPDisplayPrintUTF(dictionaryWords[21]);
+        } else {
+            MCPDisplayPrintUTF(dictionaryWords[22]);
+            MCPDisplayPrintUTF("       ");
+        }
+    }
+
+    MCPDisplayCursorSet(0, 2);
+    if (counterMode == COUNTER_MODE_MANUAL) {
+        bool sel = (UIDisplayMenuItemsObject.settingsIndexSelection == 1);
+        MCPDisplayPrintUTF(sel ? dictionaryWords[0] : "  ");
+        MCPDisplayCursorSet(2, 2);
+        if (counterManualDirection == COUNTER_DIR_FORWARD) {
+            MCPDisplayPrintUTF(dictionaryWords[18]);
+        } else {
+            MCPDisplayPrintUTF(dictionaryWords[19]);
+        }
+        MCPDisplayPrintUTF("                    ");
+    } else {
+        MCPDisplayPrintUTF("                    ");
+    }
+
+    {
+        int backIndex = (counterMode == COUNTER_MODE_AUTO) ? 1 : 2;
+        bool sel = (UIDisplayMenuItemsObject.settingsIndexSelection == backIndex);
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrintUTF(sel ? dictionaryWords[0] : "  ");
+        MCPDisplayCursorSet(2, 3);
+        MCPDisplayPrintUTF(dictionaryWords[8]);
+    }
+}
+
+
+void UIDisplayMenuTotalizersSelectedRequestReset() {
+    if (UIDisplayNeedClear == true) {
+        UIDisplayClear();
+
+        MCPDisplayCursorSet(1, 0);
+        MCPDisplayPrintUTF(dictionaryWords[9]);
+        MCPDisplayCursorSet(7, 0);
+        MCPDisplayPrintUTF(dictionaryWords[6]);
+
+        MCPDisplayCursorSet(0, 1);
+        MCPDisplayPrintUTF(dictionaryWords[10]);
+
+        MCPDisplayCursorSet(18, 1);
+        MCPDisplayPrintUTF(dictionaryWords[17]);
+
+        MCPDisplayCursorSet(0, 2);
+        MCPDisplayPrintUTF(dictionaryWords[12]);
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrintUTF(dictionaryWords[13]);
+
+        if (UIDisplayMenuItemsObject.settingsIndexTotalizersSelected == 1) {
+            MCPDisplayCursorSet(17, 1);
+            MCPDisplayPrintUTF(dictionaryWords[18]);
+        }
+        else if (UIDisplayMenuItemsObject.settingsIndexTotalizersSelected == 2) {
+            MCPDisplayCursorSet(17, 1);
+            MCPDisplayPrintUTF(dictionaryWords[19]);
+        }
+
+        UIDisplayNeedClear = false;
+    }
+
+    UIDisplayMenuItemsObject.settingsIndexLimit = 1;
+
+    switch (UIDisplayMenuItemsObject.settingsIndexSelection)
+    {
+    case 0:
+        MCPDisplayCursorSet(0, 2);
+        MCPDisplayPrintUTF(dictionaryWords[0]);
+        MCPDisplayCursorSet(2, 2);
+        MCPDisplayPrintUTF(dictionaryWords[12]);
+        break;
+    case 1:
+        MCPDisplayCursorSet(0, 3);
+        MCPDisplayPrintUTF(dictionaryWords[0]);
+        MCPDisplayCursorSet(2, 3);
+        MCPDisplayPrintUTF(dictionaryWords[13]);
+        break;
+    }
+}
+
+void UIDisplayMenuTotalizersSelectedReset() {
+    switch (UIDisplayMenuItemsObject.settingsIndexTotalizersSelected)
+    {
+    case 0:
+        totalizerCommonValueReset();
+        UIDisplaySectionListObject = sectionMenuTotalizers;
+        break;
+    case 1:
+        totalizerDirectValueReset();
+        UIDisplaySectionListObject = sectionMenuTotalizers;
+        break;
+    case 2:
+        totalizerReverseValueReset();
+        UIDisplaySectionListObject = sectionMenuTotalizers;
+        break;
+    }
+}
+
+void UIDisplayHandler() {
+    switch (UIDisplaySectionListObject)
+    {
+    case sectionDefault:
+        UIDisplayDefault();
+        break;
+    case sectionMenu:
+        UIDisplayMenuMain();
+        break;
+    case sectionMenuConnections:
+        UIDisplayMenuConnection();
+        break;
+    case sectionMenuTotalizers:
+        UIDisplayMenuTotalizers();
+        break;
+    case sectionMenuTotalizersSelectedRequestReset:
+        UIDisplayMenuTotalizersSelectedRequestReset();
+        break;
+    case sectionMenuInformations:
+        UIDisplayMenuInformation();
+        break;
+    case sectionMenuCountMode:
+        UIDisplayMenuCountMode();
+        break;
+    case sectionVoid:
+        UIDisplayToVoidAndBack();
+        break;
+    }
+}
+
+void UIButtonsHandler() {
+    buttonStatus[BUTTON_RIGHT] = digitalRead(PIN_RIGHT);
+    buttonStatus[BUTTON_UP] = digitalRead(PIN_UP);
+    buttonStatus[BUTTON_OK] = digitalRead(PIN_OK);
+    buttonStatus[BUTTON_LEFT] = digitalRead(PIN_LEFT);
+    buttonStatus[BUTTON_DOWN] = digitalRead(PIN_DOWN);
+
+    switch (UIDisplaySectionListObject)
+    {
+    case sectionDefault:
+        if (buttonStatus[BUTTON_OK] == LOW) {
+            UIDisplayDelay();
+            UIDisplaySectionListObject = sectionMenu;
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_UP] == LOW && buttonStatus[BUTTON_DOWN] == LOW && buttonStatus[BUTTON_RIGHT] == LOW && buttonStatus[BUTTON_LEFT] == LOW) {
+            UIDisplayDelay();
+            UIDisplaySectionListObject = sectionVoid;
+            UIDisplayNeedClear = true;
+        }
+        break;
+    case sectionMenu:
+        if (buttonStatus[BUTTON_UP] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection > 0) {
+                UIDisplayMenuItemsObject.settingsIndexSelection--;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = UIDisplayMenuItemsObject.settingsIndexLimit;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_DOWN] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection < UIDisplayMenuItemsObject.settingsIndexLimit) {
+                UIDisplayMenuItemsObject.settingsIndexSelection++;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+                UIDisplayMenuItemsObject.scrollOffset = 0;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_OK] == LOW) {
+            UIDisplayDelay();
+
+            switch (UIDisplayMenuItemsObject.settingsIndexSelection) {
+            case 0:
+                UIDisplaySectionListObject = sectionMenuConnections;
+                break;
+            case 1:
+                UIDisplaySectionListObject = sectionMenuTotalizers;
+                break;
+            case 2:
+                UIDisplaySectionListObject = sectionMenuInformations;
+                break;
+            case 3:
+                UIDisplaySectionListObject = sectionMenuCountMode;
+                break;
+            case 4:
+                UIDisplaySectionListObject = sectionDefault;
+                break;
+            }
+            UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+            UIDisplayMenuItemsObject.scrollOffset = 0;
+            UIDisplayNeedClear = true;
+        }
+        break;
+    case sectionMenuConnections:
+        if (buttonStatus[BUTTON_UP] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection > 0) {
+                UIDisplayMenuItemsObject.settingsIndexSelection--;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = UIDisplayMenuItemsObject.settingsIndexLimit;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_DOWN] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection < UIDisplayMenuItemsObject.settingsIndexLimit) {
+                UIDisplayMenuItemsObject.settingsIndexSelection++;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+                UIDisplayMenuItemsObject.scrollOffset = 0;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_RIGHT] == LOW) {
+            UIDisplayDelay();
+            if (UIDisplayMenuItemsObject.settingsIndexSelection == 0) {
+                modbusBaudrateListIndex++;
+                if (modbusBaudrateListIndex >= modbusBaudrateListIndexLimit) modbusBaudrateListIndex = 0;
+                deviceDataObject.modbusBaudrate = modbusBaudrateList[modbusBaudrateListIndex];
+                modbusSettingsNeedRestart = true;
+                modbusHandlerReloader();
+            }
+            else if (UIDisplayMenuItemsObject.settingsIndexSelection == 1) {
+                modbusSlaveAddressAdd();
+                modbusSettingsNeedRestart = true;
+                modbusHandlerReloader();
+            }
+            else if (UIDisplayMenuItemsObject.settingsIndexSelection == 2) {
+                deviceDataObject.modbusParity = (deviceDataObject.modbusParity + 1) % 3;
+                modbusSettingsNeedRestart = true;
+                modbusHandlerReloader();
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_LEFT] == LOW) {
+            UIDisplayDelay();
+            if (UIDisplayMenuItemsObject.settingsIndexSelection == 0) {
+                modbusBaudrateListIndex--;
+                if (modbusBaudrateListIndex < 0) modbusBaudrateListIndex = modbusBaudrateListIndexLimit - 1;
+                deviceDataObject.modbusBaudrate = modbusBaudrateList[modbusBaudrateListIndex];
+                modbusSettingsNeedRestart = true;
+                modbusHandlerReloader();
+            }
+            else if (UIDisplayMenuItemsObject.settingsIndexSelection == 1) {
+                modbusSlaveAddressReduce();
+                modbusSettingsNeedRestart = true;
+                modbusHandlerReloader();
+            }
+            else if (UIDisplayMenuItemsObject.settingsIndexSelection == 2) {
+                deviceDataObject.modbusParity = (deviceDataObject.modbusParity + 2) % 3; // -1 по модулю 3
+                modbusSettingsNeedRestart = true;
+                modbusHandlerReloader();
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_OK] == LOW) {
+            UIDisplayDelay();
+            if (UIDisplayMenuItemsObject.settingsIndexSelection == 3) {  // Пункт "Back"
+                UIDisplaySectionListObject = sectionMenu;
+            }
+            UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+            UIDisplayMenuItemsObject.scrollOffset = 0;
+            UIDisplayNeedClear = true;
+        }
+        break;
+    case sectionMenuTotalizers:
+        if (buttonStatus[BUTTON_UP] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection > 0) {
+                UIDisplayMenuItemsObject.settingsIndexSelection--;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = UIDisplayMenuItemsObject.settingsIndexLimit;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_DOWN] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection < UIDisplayMenuItemsObject.settingsIndexLimit) {
+                UIDisplayMenuItemsObject.settingsIndexSelection++;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+                UIDisplayMenuItemsObject.scrollOffset = 0;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_OK] == LOW) {
+            UIDisplayDelay();
+
+            switch (UIDisplayMenuItemsObject.settingsIndexSelection) {
+            case 0:
+                UIDisplayMenuItemsObject.settingsIndexTotalizersSelected = 1;
+                UIDisplaySectionListObject = sectionMenuTotalizersSelectedRequestReset;
+                break;
+            case 1:
+                UIDisplayMenuItemsObject.settingsIndexTotalizersSelected = 2;
+                UIDisplaySectionListObject = sectionMenuTotalizersSelectedRequestReset;
+                break;
+            case 2:
+                UIDisplaySectionListObject = sectionMenu;
+                break;
+            }
+            UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+            UIDisplayMenuItemsObject.scrollOffset = 0;
+            UIDisplayNeedClear = true;
+        }
+        break;
+    case sectionMenuTotalizersSelectedRequestReset:
+        if (buttonStatus[BUTTON_UP] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection > 0) {
+                UIDisplayMenuItemsObject.settingsIndexSelection--;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = UIDisplayMenuItemsObject.settingsIndexLimit;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_DOWN] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection < UIDisplayMenuItemsObject.settingsIndexLimit) {
+                UIDisplayMenuItemsObject.settingsIndexSelection++;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+                UIDisplayMenuItemsObject.scrollOffset = 0;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_OK] == LOW) {
+            UIDisplayDelay();
+
+            switch (UIDisplayMenuItemsObject.settingsIndexSelection) {
+            case 0:
+                UIDisplayMenuTotalizersSelectedReset();
+                break;
+            case 1:
+                UIDisplaySectionListObject = sectionMenuTotalizers;
+                break;
+            }
+            UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+            UIDisplayMenuItemsObject.scrollOffset = 0;
+            UIDisplayMenuItemsObject.settingsIndexTotalizersSelected = 0; // Reset selected totalizer!
+            UIDisplayNeedClear = true;
+        }
+        break;
+    case sectionMenuInformations:
+        if (buttonStatus[BUTTON_UP] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection > 0) {
+                UIDisplayMenuItemsObject.settingsIndexSelection--;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = UIDisplayMenuItemsObject.settingsIndexLimit;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_DOWN] == LOW) {
+            UIDisplayDelay();
+
+            if (UIDisplayMenuItemsObject.settingsIndexSelection < UIDisplayMenuItemsObject.settingsIndexLimit) {
+                UIDisplayMenuItemsObject.settingsIndexSelection++;
+            }
+            else {
+                UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+                UIDisplayMenuItemsObject.scrollOffset = 0;
+            }
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_OK] == LOW) {
+            UIDisplayDelay();
+
+            switch (UIDisplayMenuItemsObject.settingsIndexSelection) {
+            case 0:
+                UIDisplaySectionListObject = sectionMenu;
+                break;
+            }
+            UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+            UIDisplayMenuItemsObject.scrollOffset = 0;
+            UIDisplayNeedClear = true;
+        }
+        break;
+    case sectionMenuCountMode:
+    if (buttonStatus[BUTTON_UP] == LOW) {
+        UIDisplayDelay();
+        if (UIDisplayMenuItemsObject.settingsIndexSelection > 0) {
+            UIDisplayMenuItemsObject.settingsIndexSelection--;
+        } else {
+            UIDisplayMenuItemsObject.settingsIndexSelection =
+                UIDisplayMenuItemsObject.settingsIndexLimit;
+        }
+        UIDisplayNeedClear = true;
+    }
+    if (buttonStatus[BUTTON_DOWN] == LOW) {
+        UIDisplayDelay();
+        if (UIDisplayMenuItemsObject.settingsIndexSelection <
+                UIDisplayMenuItemsObject.settingsIndexLimit) {
+            UIDisplayMenuItemsObject.settingsIndexSelection++;
+        } else {
+            UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+        }
+        UIDisplayNeedClear = true;
+    }
+    if (buttonStatus[BUTTON_RIGHT] == LOW || buttonStatus[BUTTON_LEFT] == LOW) {
+        UIDisplayDelay();
+
+        if (UIDisplayMenuItemsObject.settingsIndexSelection == 0) {
+            counterMode = (counterMode == COUNTER_MODE_AUTO) ? COUNTER_MODE_MANUAL : COUNTER_MODE_AUTO;
+            counterModeApply();
+
+            if (counterMode == COUNTER_MODE_AUTO && UIDisplayMenuItemsObject.settingsIndexSelection > 1) {
+                UIDisplayMenuItemsObject.settingsIndexSelection = 1;
+            }
+        }
+        else if (UIDisplayMenuItemsObject.settingsIndexSelection == 1 && counterMode == COUNTER_MODE_MANUAL) {
+            counterManualDirection = (counterManualDirection == COUNTER_DIR_FORWARD) ? COUNTER_DIR_BACKWARD : COUNTER_DIR_FORWARD;
+        }
+        UIDisplayNeedClear = true;
+    }
+    if (buttonStatus[BUTTON_OK] == LOW) {
+        UIDisplayDelay();
+
+        int backIndex = (counterMode == COUNTER_MODE_AUTO) ? 1 : 2;
+        if (UIDisplayMenuItemsObject.settingsIndexSelection == backIndex) {
+            UIDisplaySectionListObject = sectionMenu;
+            UIDisplayMenuItemsObject.settingsIndexSelection = 0;
+            UIDisplayNeedClear = true;
+        }
+    }
+    break;
+    case sectionVoid:
+        if (buttonStatus[BUTTON_OK] == LOW) {
+            UIDisplayDelay();
+            UIDisplaySectionListObject = sectionDefault;
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_UP] == LOW) {
+            UIDisplayDelay();
+            UIDisplaySectionListObject = sectionDefault;
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_DOWN] == LOW) {
+            UIDisplayDelay();
+            UIDisplaySectionListObject = sectionDefault;
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_RIGHT] == LOW) {
+            UIDisplayDelay();
+            UIDisplaySectionListObject = sectionDefault;
+            UIDisplayNeedClear = true;
+        }
+        if (buttonStatus[BUTTON_LEFT] == LOW) {
+            UIDisplayDelay();
+            UIDisplaySectionListObject = sectionDefault;
+            UIDisplayNeedClear = true;
+        }
+        break;
+    }
+}
+
+void UIDisplayDelay() {
+    delay(UIDisplayButtonTimeoutPressing);
+}
