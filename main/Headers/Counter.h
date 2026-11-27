@@ -3,8 +3,8 @@
 
 #include <Arduino.h>
 
-#define SENSOR_FIRST_PINOUT  2
-#define SENSOR_SECOND_PINOUT 3
+#define SENSOR_FIRST_PINOUT  4
+#define SENSOR_SECOND_PINOUT 5
 
 #define AUTO_STATE_IDLE      0
 #define AUTO_STATE_S1_FIRST  1

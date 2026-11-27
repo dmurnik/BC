@@ -1,9 +1,6 @@
 #ifndef IODATASD_H
 #define IODATASD_H
 
-#include <SD.h>
-#include <SPI.h>
-
 #include <Wire.h>
 
 #include "MCPDisplay.h"

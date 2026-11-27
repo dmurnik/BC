@@ -78,7 +78,29 @@ volatile uint8_t autoState = AUTO_STATE_IDLE;
 volatile uint8_t counterMode = COUNTER_MODE_AUTO;
 volatile uint8_t counterManualDirection = COUNTER_DIR_FORWARD;
 
-void counterSensorFirst() {
+void IRAM_ATTR counterSensorHandleForward() {
+    totalizerDirectValueAdd();
+    totalizerCommonValueAdd();
+    autoState = AUTO_STATE_IDLE;
+}
+
+void IRAM_ATTR counterSensorHandleBackward() {
+    totalizerReverseValueAdd();
+    totalizerCommonValueAdd();
+    autoState = AUTO_STATE_IDLE;
+}
+
+void IRAM_ATTR counterSensorHandleManual() {
+    if (counterManualDirection == COUNTER_DIR_FORWARD) {
+        totalizerDirectValueAdd();
+    } else {
+        totalizerReverseValueAdd();
+    }
+    totalizerCommonValueAdd();
+    autoState = AUTO_STATE_IDLE;
+}
+
+void IRAM_ATTR counterSensorFirst() {
     if (autoState == AUTO_STATE_S1_FIRST) {
         autoState = AUTO_STATE_IDLE;
         return;
@@ -97,7 +119,7 @@ void counterSensorFirst() {
     }
 }
 
-void counterSensorSecondary() {
+void IRAM_ATTR counterSensorSecondary() {
     if (autoState == AUTO_STATE_S2_FIRST) {
         autoState = AUTO_STATE_IDLE;
         return;
@@ -116,90 +138,36 @@ void counterSensorSecondary() {
     }
 }
 
-void counterSensorFirstManual() {
-    if (counterManualDirection == COUNTER_DIR_FORWARD)
-    {
-        switch (manualState) {
-            case MANUAL_STATE_IDLE:    // 0
-                manualState = MANUAL_STATE_WAIT_S2;  // 0 > 2
-                break;
-            case MANUAL_STATE_WAIT_S1: // 1
-                manualState = MANUAL_STATE_IDLE;    // 1 > 0
-                break;
-            case MANUAL_STATE_WRONG:   // 3
-                manualState = MANUAL_STATE_IDLE;   // 3 > 0
-                break;
-        }
-    }
-    else
-    {
-        switch (manualState) {
-            case MANUAL_STATE_IDLE:    // 0 - To move backward, S1 must be the first.
-                manualState = MANUAL_STATE_WRONG; // 0 > 3
-                break;
-            case MANUAL_STATE_WAIT_S1: // 1
-                counterSensorHandleManual();
-                manualState = MANUAL_STATE_IDLE;
-                break;
-            case MANUAL_STATE_WRONG:   // 3
-                manualState = MANUAL_STATE_IDLE;   // 3 > 0
-                break;
-        }
-    }
-}
-
-void counterSensorSecondaryManual() {
-    if (counterManualDirection == COUNTER_DIR_FORWARD)
-    {
-        switch (manualState) {
-            case MANUAL_STATE_IDLE:    // 0 - To move forward, S1 must be the first.
-                manualState = MANUAL_STATE_WRONG; // 0 > 3
-                break;
-            case MANUAL_STATE_WAIT_S2: // 2
-                counterSensorHandleManual();
-                manualState = MANUAL_STATE_IDLE;  // 2 > 0
-                break;
-            case MANUAL_STATE_WRONG:   // 3
-                manualState = MANUAL_STATE_IDLE;  // 3 > 0
-                break;
-        }
-    }
-    else
-    {
-        switch (manualState) {
-            case MANUAL_STATE_IDLE:    // 0
-                manualState = MANUAL_STATE_WAIT_S1; // 0 > 1
-                break;
-            case MANUAL_STATE_WAIT_S2: // 2
-                manualState = MANUAL_STATE_IDLE;    // 2 > 0
-                break;
-            case MANUAL_STATE_WRONG:   // 3
-                manualState = MANUAL_STATE_IDLE;    // 3 > 0
-                break;
-        }
-    }
-}
-
-void counterSensorHandleForward() {
-    totalizerDirectValueAdd();
-    totalizerCommonValueAdd();
-    autoState = AUTO_STATE_IDLE;
-}
-
-void counterSensorHandleBackward() {
-    totalizerReverseValueAdd();
-    totalizerCommonValueAdd();
-    autoState = AUTO_STATE_IDLE;
-}
-
-void counterSensorHandleManual() {
+void IRAM_ATTR counterSensorFirstManual() {
     if (counterManualDirection == COUNTER_DIR_FORWARD) {
-        totalizerDirectValueAdd();
+        switch (manualState) {
+            case MANUAL_STATE_IDLE:    manualState = MANUAL_STATE_WAIT_S2; break;
+            case MANUAL_STATE_WAIT_S1: manualState = MANUAL_STATE_IDLE;    break;
+            case MANUAL_STATE_WRONG:   manualState = MANUAL_STATE_IDLE;    break;
+        }
     } else {
-        totalizerReverseValueAdd();
+        switch (manualState) {
+            case MANUAL_STATE_IDLE:    manualState = MANUAL_STATE_WRONG; break;
+            case MANUAL_STATE_WAIT_S1: counterSensorHandleManual(); manualState = MANUAL_STATE_IDLE; break;
+            case MANUAL_STATE_WRONG:   manualState = MANUAL_STATE_IDLE;  break;
+        }
     }
-    totalizerCommonValueAdd();
-    autoState = AUTO_STATE_IDLE;
+}
+
+void IRAM_ATTR counterSensorSecondaryManual() {
+    if (counterManualDirection == COUNTER_DIR_FORWARD) {
+        switch (manualState) {
+            case MANUAL_STATE_IDLE:    manualState = MANUAL_STATE_WRONG; break;
+            case MANUAL_STATE_WAIT_S2: counterSensorHandleManual(); manualState = MANUAL_STATE_IDLE; break;
+            case MANUAL_STATE_WRONG:   manualState = MANUAL_STATE_IDLE;  break;
+        }
+    } else {
+        switch (manualState) {
+            case MANUAL_STATE_IDLE:    manualState = MANUAL_STATE_WAIT_S1; break;
+            case MANUAL_STATE_WAIT_S2: manualState = MANUAL_STATE_IDLE;    break;
+            case MANUAL_STATE_WRONG:   manualState = MANUAL_STATE_IDLE;    break;
+        }
+    }
 }
 
 void sensorsInitialize() {
@@ -220,14 +188,12 @@ void sensorsDetachAll() {
 
 void counterModeApply() {
     sensorsDetachAll();
-
     autoState = AUTO_STATE_IDLE;
     manualState = MANUAL_STATE_IDLE;
 
     if (counterMode == COUNTER_MODE_AUTO) {
         sensorsAttachAuto();
-    } 
-    else {
+    } else {
         attachInterrupt(digitalPinToInterrupt(SENSOR_FIRST_PINOUT), counterSensorFirstManual, FALLING);
         attachInterrupt(digitalPinToInterrupt(SENSOR_SECOND_PINOUT), counterSensorSecondaryManual, FALLING);
     }

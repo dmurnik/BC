@@ -1,12 +1,6 @@
 #include "Arduino.h"
 #include "../Headers/Headers.h"
 
-#define PIN_RIGHT 9 // [PB1] | Physical pinout of the microcircuit: 13
-#define PIN_UP    6 // [PB0] | Physical pinout of the microcircuit: 12
-#define PIN_OK    7 // [PD7] | Physical pinout of the microcircuit: 11
-#define PIN_LEFT  5 // [PD6] | Physical pinout of the microcircuit: 10
-#define PIN_DOWN  8 // [PD5] | Physical pinout of the microcircuit: 9
-
 #define BUTTON_RIGHT 0
 #define BUTTON_UP    1
 #define BUTTON_OK    2
@@ -55,7 +49,7 @@ void UIDisplayClear() {
     MCPDisplayCommandSend(0x01);
 }
 // Thank`s You for help me - claude.ai... But i hate ai :^
-void UIDisplayMenuScrollable(const char** items, int count, const char* title = nullptr) {
+void UIDisplayMenuScrollable(const char** items, int count, const char* title) {
     int visibleRows = (title != nullptr) ? 3 : 4;
     int startRow    = (title != nullptr) ? 1 : 0;
 
